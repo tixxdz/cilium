@@ -26,6 +26,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/cilium/cilium/api/v1/models"
 	"github.com/cilium/cilium/pkg/bpf"
 	"github.com/cilium/cilium/pkg/defaults"
 	"github.com/cilium/cilium/pkg/lock"
@@ -281,6 +282,54 @@ func DoDumpEntries(m CtMap) (string, error) {
 // in m to a string.
 func (m *Map) DumpEntries() (string, error) {
 	return DoDumpEntries(m)
+}
+
+func DumpEntriesWithTimeDiff(m CtMap, clockSource models.ClockSource) (string, error) {
+	var toRemSecs func(uint32) string
+	switch clockSource.Mode {
+	case "ktime":
+		now, err := bpf.GetMtime()
+		if err != nil {
+			return "", err
+		}
+		now = now / 1000000000
+		toRemSecs = func(t uint32) string {
+			diff := int64(t) - int64(now)
+			return fmt.Sprintf("remaining: %d sec(s)", diff)
+		}
+
+	case "jiffies":
+		now, err := bpf.GetJtime()
+		if err != nil {
+			return "", err
+		}
+		if clockSource.Hertz == 0 {
+			return "", fmt.Errorf("invalid clock Hertz value (0)")
+		}
+		toRemSecs = func(t uint32) string {
+			diff := int64(t) - int64(now)
+			diff = diff << 8
+			diff = diff / int64(clockSource.Hertz)
+			return fmt.Sprintf("remaining: %d sec(s)", diff)
+		}
+
+	default:
+		return "", fmt.Errorf("unknown clock source: %s", clockSource.Mode)
+	}
+
+	var sb strings.Builder
+	cb := func(k bpf.MapKey, v bpf.MapValue) {
+		// No need to deep copy as the values are used to create new strings
+		key := k.(CtKey)
+		if !key.ToHost().Dump(&sb, true) {
+			return
+		}
+		value := v.(*CtEntry)
+		sb.WriteString(value.TimeDiffString(toRemSecs))
+	}
+	// DumpWithCallback() must be called before sb.String().
+	err := m.DumpWithCallback(cb)
+	return sb.String(), err
 }
 
 // newMap creates a new CT map of the specified type with the specified name.

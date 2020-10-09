@@ -17,6 +17,7 @@ cilium bpf ct list ( <endpoint identifier> | global ) [flags]
 ```
   -h, --help            help for list
   -o, --output string   json| jsonpath='{}'
+  -d, --time-diff       print time difference for entries
 ```
 
 ### Options inherited from parent commands

@@ -779,7 +779,7 @@ var _ = Describe("K8sServicesTest", func() {
 			// packets.
 
 			// Field #7 is "RxPackets=<n>"
-			cmdIn := "cilium bpf ct list global | awk '/%s/ { sub(\".*=\",\"\", $7); print $7 }'"
+			cmdIn := "cilium bpf ct list global | perl -ne 'print $1 if /%s.*RxPackets=(\\d+).*/'"
 
 			endpointK8s1 := net.JoinHostPort(dstPodIPK8s1, fmt.Sprintf("%d", dstPodPort))
 			patternInK8s1 := fmt.Sprintf("UDP IN [^:]+:%d -> %s", srcPort, endpointK8s1)
@@ -794,7 +794,7 @@ var _ = Describe("K8sServicesTest", func() {
 			countInK8s2, _ := strconv.Atoi(strings.TrimSpace(res.Stdout()))
 
 			// Field #11 is "TxPackets=<n>"
-			cmdOut := "cilium bpf ct list global | awk '/%s/ { sub(\".*=\",\"\", $11); print $11 }'"
+			cmdOut := "cilium bpf ct list global | perl -ne 'print $1 if /%s.*TxPackets=(\\d+).*/'"
 
 			if !hasDNAT {
 				// If kube-proxy is enabled, we see packets in ctmap with the
