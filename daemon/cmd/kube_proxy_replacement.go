@@ -307,6 +307,22 @@ func detectNativeDevices(strict bool) {
 // replacement after all devices are known.
 func finishKubeProxyReplacementInit(isKubeProxyReplacementStrict bool) {
 	if option.Config.EnableNodePort {
+		// Check whether the DirectRoutingDevice (if specified) is defined within devices
+		// and if not, add it.
+		if option.Config.DirectRoutingDevice != "" {
+			directDev := option.Config.DirectRoutingDevice
+			directDevFound := false
+			for _, iface := range option.Config.Devices {
+				if iface == directDev {
+					directDevFound = true
+					break
+				}
+			}
+			if !directDevFound {
+				option.Config.Devices = append(option.Config.Devices, directDev)
+			}
+		}
+
 		if err := node.InitNodePortAddrs(option.Config.Devices); err != nil {
 			msg := "Failed to initialize NodePort addrs."
 			if isKubeProxyReplacementStrict {
