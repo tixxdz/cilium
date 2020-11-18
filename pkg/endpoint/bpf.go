@@ -808,6 +808,9 @@ func (e *Endpoint) runPreCompilationSteps(regenContext *regenerationContext) (he
 		}
 		// Clean up map contents
 		e.getLogger().Debug("flushing old PolicyMap")
+		if dbgLog := e.getPolicyLogger(); dbgLog != nil {
+			dbgLog.Debug("runPreCompilationSteps flushing old PolicyMap")
+		}
 		err = e.policyMap.DeleteAll()
 		if err != nil {
 			return false, err
@@ -1096,10 +1099,10 @@ func (e *Endpoint) deletePolicyKey(keyToDelete policy.Key, incremental bool, had
 		return false
 	}
 
-	if hadProxy != nil {
-		if entry, ok := e.realizedPolicy.PolicyMapState[keyToDelete]; ok && entry.ProxyPort != 0 {
-			*hadProxy = true
-		}
+	var entry policy.MapStateEntry
+	var ok bool
+	if entry, ok = e.realizedPolicy.PolicyMapState[keyToDelete]; ok && entry.ProxyPort != 0 && hadProxy != nil {
+		*hadProxy = true
 	}
 
 	// Operation was successful, remove from realized state.
@@ -1110,6 +1113,13 @@ func (e *Endpoint) deletePolicyKey(keyToDelete policy.Key, incremental bool, had
 		delete(e.desiredPolicy.PolicyMapState, keyToDelete)
 	}
 
+	if dbgLog := e.getPolicyLogger(); dbgLog != nil {
+		dbgLog.WithFields(logrus.Fields{
+			logfields.BPFMapKey:   keyToDelete,
+			logfields.BPFMapValue: entry,
+			"incremental":         incremental,
+		}).Debug("deletePolicyKey")
+	}
 	return true
 }
 
@@ -1144,6 +1154,13 @@ func (e *Endpoint) addPolicyKey(keyToAdd policy.Key, entry policy.MapStateEntry,
 		e.desiredPolicy.PolicyMapState[keyToAdd] = entry
 	}
 
+	if dbgLog := e.getPolicyLogger(); dbgLog != nil {
+		dbgLog.WithFields(logrus.Fields{
+			logfields.BPFMapKey:   keyToAdd,
+			logfields.BPFMapValue: entry,
+			"incremental":         incremental,
+		}).Debug("addPolicyKey")
+	}
 	return true
 }
 
@@ -1156,6 +1173,10 @@ func (e *Endpoint) ApplyPolicyMapChanges(proxyWaitGroup *completion.WaitGroup) e
 		return err
 	}
 	defer e.unlock()
+
+	if dbgLog := e.getPolicyLogger(); dbgLog != nil {
+		dbgLog.Debug("ApplyPolicyMapChanges")
+	}
 
 	proxyChanges, err := e.applyPolicyMapChanges()
 	if err != nil {
@@ -1177,6 +1198,10 @@ func (e *Endpoint) ApplyPolicyMapChanges(proxyWaitGroup *completion.WaitGroup) e
 // collected on the desired policy.
 func (e *Endpoint) applyPolicyMapChanges() (proxyChanges bool, err error) {
 	errors := 0
+
+	if dbgLog := e.getPolicyLogger(); dbgLog != nil {
+		dbgLog.Debug("applyPolicyMapChanges")
+	}
 
 	//  Note that after successful endpoint regeneration the
 	//  desired and realized policies are the same pointer. During
@@ -1222,6 +1247,12 @@ func (e *Endpoint) applyPolicyMapChanges() (proxyChanges bool, err error) {
 // difference between the realized and desired policy state without
 // dumping the bpf policy map.
 func (e *Endpoint) syncPolicyMap() error {
+	if dbgLog := e.getPolicyLogger(); dbgLog != nil {
+		dbgLog.WithFields(logrus.Fields{
+			"policyRealized": e.realizedPolicy == e.desiredPolicy,
+		}).Debug("syncPolicyMap")
+	}
+
 	// Nothing to do if the desired policy is already fully realized.
 	if e.realizedPolicy != e.desiredPolicy {
 		errors := 0
@@ -1243,7 +1274,7 @@ func (e *Endpoint) syncPolicyMap() error {
 		}
 
 		if errors > 0 {
-			return fmt.Errorf("syncPolicyMapDelta failed")
+			return fmt.Errorf("syncPolicyMap failed")
 		}
 	}
 
@@ -1331,6 +1362,12 @@ func (e *Endpoint) syncPolicyMapWithDump() error {
 
 	errors := 0
 
+	// Log full policy map for every dump
+	if dbgLog := e.getPolicyLogger(); dbgLog != nil {
+		dbgLog.WithFields(logrus.Fields{
+			"dumpedPolicyMap": currentMapContents,
+		}).Debug("syncPolicyMapWithDump")
+	}
 	for _, entry := range currentMapContents {
 		// Convert key to host-byte order for lookup in the desiredMapState.
 		keyHostOrder := entry.ToHost()
