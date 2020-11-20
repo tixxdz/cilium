@@ -23,9 +23,12 @@ import (
 	"net"
 	"reflect"
 	"sort"
+	"strconv"
+	"text/template"
 
 	"github.com/cilium/cilium/pkg/bpf"
 	"github.com/cilium/cilium/pkg/byteorder"
+	"github.com/cilium/cilium/pkg/common"
 	"github.com/cilium/cilium/pkg/datapath"
 	"github.com/cilium/cilium/pkg/datapath/iptables"
 	"github.com/cilium/cilium/pkg/datapath/link"
@@ -237,6 +240,47 @@ func (h *HeaderfileWriter) WriteNodeConfig(w io.Writer, cfg *datapath.LocalNodeC
 		if option.Config.EnableHostServicesPeer {
 			cDefinesMap["ENABLE_HOST_SERVICES_PEER"] = "1"
 		}
+	}
+
+	ciliumHost, err := netlink.LinkByName("cilium_host")
+	if err != nil {
+		return err
+	}
+	ciliumNet, err := netlink.LinkByName("cilium_net")
+	if err != nil {
+		return err
+	}
+	cDefinesMap["CILIUM_NET_MAC"] = common.GoArray2C(ciliumNet.Attrs().HardwareAddr)
+	cDefinesMap["HOST_IFINDEX"] = strconv.Itoa(ciliumNet.Attrs().Index)
+	cDefinesMap["HOST_IFINDEX_MAC"] = common.GoArray2C(ciliumHost.Attrs().HardwareAddr)
+	cDefinesMap["CILIUM_IFINDEX"] = strconv.Itoa(ciliumHost.Attrs().Index)
+
+	_, ephemeralMin, _, err := node.EphemeralPortRange()
+	if err != nil {
+		return err
+	}
+	cDefinesMap["CILIUM_EPHEMERAL_MIN"] = strconv.Itoa(ephemeralMin)
+
+	t := template.Must(template.New("nativeDevMacByIfindex").Parse(`#define NATIVE_DEV_MAC_BY_IFINDEX(IFINDEX) ({ \
+	union macaddr __mac = {.addr = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0}}; \
+	switch (IFINDEX) { \
+{{range .devices}}
+	case {{.Attrs().Index}}: {union macaddr __tmp = {.addr = {{common.GoArray2C(ciliumNet.Attrs().HardwareAddr)}}; __mac=__tmp;} break; \
+{{end}}
+	} \
+	__mac; })`))
+	devices := make([]netlink.Link, 0, len(option.Config.Devices))
+	if len(option.Config.Devices) != 0 {
+		for _, device := range option.Config.Devices {
+			link, err := netlink.LinkByName(device)
+			if err != nil {
+				return err
+			}
+			devices = append(devices, link)
+		}
+	}
+	if err := t.Execute(w, devices); err != nil {
+		return err
 	}
 
 	if option.Config.EnableNodePort {
